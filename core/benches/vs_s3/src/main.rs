@@ -64,7 +64,7 @@ fn main() {
     let config = TEST_RUNTIME.block_on(config_loader.load());
     let s3_client = aws_sdk_s3::Client::new(&config);
 
-    let mut c = Criterion::default().configure_from_args();
+    let mut c = Criterion::default().sample_size(10).configure_from_args();
     bench_read(&mut c, op, s3_client, bucket);
 
     c.final_summary();
@@ -72,18 +72,18 @@ fn main() {
 
 fn bench_read(c: &mut Criterion, op: Operator, s3_client: aws_sdk_s3::Client, bucket: String) {
     let mut group = c.benchmark_group("read");
-    group.throughput(criterion::Throughput::Bytes(SIZE as u64));
+    group.throughput(criterion::Throughput::Bytes(CONCURRENCY as u64 * SIZE as u64));
 
     TEST_RUNTIME.block_on(prepare(&op));
 
     group.bench_function("opendal_s3_reader", |b| {
         b.to_async(&*TEST_RUNTIME).iter(|| async {
             let tracker = TaskTracker::new();
-            for _ in 0..CONCURRENCY {
+            for i in 0..CONCURRENCY {
                 tracker.spawn({
                     let op = op.clone();
                     async move {
-                        let r = op.reader("file").await.unwrap();
+                        let r = op.reader(&format!("file_{i}")).await.unwrap();
                         let _ = r.read(..).await.unwrap();
                     }
                 });
@@ -95,7 +95,7 @@ fn bench_read(c: &mut Criterion, op: Operator, s3_client: aws_sdk_s3::Client, bu
     group.bench_function("aws_s3_sdk_into_async_read", |b| {
         b.to_async(&*TEST_RUNTIME).iter(|| async {
             let tracker = TaskTracker::new();
-            for _ in 0..CONCURRENCY {
+            for i in 0..CONCURRENCY {
                 tracker.spawn({
                     let s3_client = s3_client.clone();
                     let bucket = bucket.clone();
@@ -103,7 +103,7 @@ fn bench_read(c: &mut Criterion, op: Operator, s3_client: aws_sdk_s3::Client, bu
                         let mut r = s3_client
                             .get_object()
                             .bucket(bucket)
-                            .key("file")
+                            .key(&format!("file_{i}"))
                             .send()
                             .await
                             .unwrap()
@@ -122,11 +122,11 @@ fn bench_read(c: &mut Criterion, op: Operator, s3_client: aws_sdk_s3::Client, bu
     group.bench_function("opendal_s3_reader_with_capacity", |b| {
         b.to_async(&*TEST_RUNTIME).iter(|| async {
             let tracker = TaskTracker::new();
-            for _ in 0..CONCURRENCY {
+            for i in 0..CONCURRENCY {
                 tracker.spawn({
                     let op = op.clone();
                     async move {
-                        let r = op.reader("file").await.unwrap();
+                        let r = op.reader(&format!("file_{i}")).await.unwrap();
                         let _ = r.read(..SIZE as u64).await.unwrap();
                     }
                 });
@@ -138,7 +138,7 @@ fn bench_read(c: &mut Criterion, op: Operator, s3_client: aws_sdk_s3::Client, bu
     group.bench_function("aws_s3_sdk_into_async_read_with_capacity", |b| {
         b.to_async(&*TEST_RUNTIME).iter(|| async {
             let tracker = TaskTracker::new();
-            for _ in 0..CONCURRENCY {
+            for i in 0..CONCURRENCY {
                 tracker.spawn({
                     let s3_client = s3_client.clone();
                     let bucket = bucket.clone();
@@ -146,7 +146,7 @@ fn bench_read(c: &mut Criterion, op: Operator, s3_client: aws_sdk_s3::Client, bu
                         let mut r = s3_client
                             .get_object()
                             .bucket(bucket)
-                            .key("file")
+                            .key(&format!("file_{i}"))
                             .send()
                             .await
                             .unwrap()
@@ -166,9 +166,10 @@ fn bench_read(c: &mut Criterion, op: Operator, s3_client: aws_sdk_s3::Client, bu
 }
 
 async fn prepare(op: &Operator) {
-    let mut rng = thread_rng();
-    let mut content = vec![0; SIZE];
-    rng.fill_bytes(&mut content);
-
-    op.write("file", content).await.unwrap();
+    for i in 0..CONCURRENCY {
+        let mut rng = thread_rng();
+        let mut content = vec![0; SIZE];
+        rng.fill_bytes(&mut content);
+        op.write(&format!("file_{i}"), content).await.unwrap();
+    }
 }
