@@ -5518,6 +5518,7 @@ dependencies = [
  "opendal",
  "rand 0.8.5",
  "tokio",
+ "tokio-util",
 ]
 
 [[package]]
@@ -8916,6 +8917,8 @@ dependencies = [
  "futures-core",
  "futures-io",
  "futures-sink",
+ "futures-util",
+ "hashbrown 0.14.5",
  "pin-project-lite",
  "tokio",
 ]
